@@ -672,7 +672,7 @@ class GroupMovieFrame(tk.Frame):
 
         self.video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.video_sock.settimeout(1.0)
-        self.current_photo = None  # prevent GC
+        self.current_photo = None
 
         self.video_frame = tk.Frame(self, width=800, height=450, bg="black")
         self.video_frame.pack(pady=10)
@@ -811,48 +811,6 @@ class GroupMovieFrame(tk.Frame):
         messagebox.showinfo("movie ended", "the movie has ended")
         self.video_label.config(image="")
         self.current_photo = None
-
-# import tkinter.filedialog as filedialog
-# class AddMovieFrame(tk.Frame):
-#     def __init__(self, parent, app):
-#         super().__init__(parent)
-#         self.app = app
-#
-#         tk.Label(self, text="Add Movie", font=("Arial", 20)).pack(pady=20)
-#
-#         tk.Label(self, text="Title").pack()
-#         self.title_entry = tk.Entry(self, width=30)
-#         self.title_entry.pack(pady=5)
-#
-#         tk.Label(self, text="File").pack()
-#         file_frame = tk.Frame(self)
-#         file_frame.pack(pady=5)
-#         self.path_entry = tk.Entry(file_frame, width=30)
-#         self.path_entry.pack(side="left")
-#         tk.Button(file_frame, text="Browse", command=self.browse).pack(side="left", padx=5)
-#
-#         tk.Button(self, text="Add", command=self.add_movie).pack(pady=10)
-#         tk.Button(self, text="Back", command=lambda: app.switch_frame("LobbyFrame")).pack()
-#
-#     def browse(self):
-#         path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4")])
-#         if path:
-#             self.path_entry.delete(0, tk.END)
-#             self.path_entry.insert(0, path)
-#
-#     def add_movie(self):
-#         title = self.title_entry.get().strip()
-#         path  = self.path_entry.get().strip()
-#         if not title or not path:
-#             messagebox.showerror("error", "please fill all fields")
-#             return
-#         send_secure(self.app.sock, self.app.session, f"ADD_MOVIE|{title}|{path}")
-#         res = recv_secure(self.app.sock, self.app.session)
-#         if res == "OK":
-#             messagebox.showinfo("success", "movie added")
-#             self.app.switch_frame("LobbyFrame")
-#         elif res.startswith("ERROR|"):
-#             messagebox.showerror("error", res.split("|", 1)[1])
 
 
 
