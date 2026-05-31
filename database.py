@@ -66,13 +66,34 @@ class Group:
         self.is_playing = False
         self.last_sync_time = time.time()
 
+        self.stream_clients = set()
+        self.stream_lock = threading.Lock()
+        self.skip_count = 0
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["stream_lock"]
+        del state["stream_clients"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.stream_clients = set()
+        self.stream_lock = threading.Lock()
+
+class Movie:
+    def __init__(self, movie_id, title, path):
+        self.movie_id = movie_id
+        self.title = title
+        self.path = path
 
 
-data = {"users": [], "pending_users": [], "password_resets": [],"groups": []}
+
+data = {"users": [], "pending_users": [], "password_resets": [],"groups": [],"movies": []}
 
 
 def emptyData():
-    return {"users": [], "pending_users": [], "password_resets": [],"groups": []}
+    return {"users": [], "pending_users": [], "password_resets": [],"groups": [],"movies": []}
 
 
 def loadData():
@@ -98,6 +119,13 @@ def loadData():
             data["pending_users"] = loaded.get("pending_users", [])
             data["password_resets"] = loaded.get("password_resets", [])
             data["groups"] = loaded.get("groups", [])
+            data["movies"] = loaded.get("movies", [])
+
+            for group in data["groups"]:
+                if not hasattr(group, "stream_clients"):
+                    group.stream_clients = set()
+                if not hasattr(group, "stream_lock"):
+                    group.stream_lock = threading.Lock()
             return
 
         data = emptyData()
@@ -152,9 +180,6 @@ def isPasswordOk(username, password):
 def getUserEmail(username):
     user = getUserByUsername(username)
     return user.email if user else None
-
-
-loadData()
 
 
 def cleanupExpired():
@@ -386,3 +411,33 @@ def update_group_time(group):
         now_time = time.time()
         group.current_time += int(now_time - group.last_update_time)
         group.last_update_time = now_time
+
+def getMoviePath(movie_id):
+    with obj_lock:
+        for movie in data["movies"]:
+            if movie.movie_id == movie_id: return movie.path
+
+        return None
+
+
+def addMovie(movie_id, title, path):
+    with obj_lock:
+        data["movies"].append(Movie(movie_id, title, path))
+        saveData()
+
+loadData()
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MOVIES_DIR = os.path.join(BASE_DIR, "movies")
+
+if not any(m.movie_id == "movie1" for m in data["movies"]):
+    addMovie("movie1", "cars", os.path.join(MOVIES_DIR, "1_movie.mp4"))
+if not any(m.movie_id == "movie2" for m in data["movies"]):
+    addMovie("movie2", "knicks highlights", os.path.join(MOVIES_DIR, "knicks_highlights.mp4"))
+if not any(m.movie_id == "movie3" for m in data["movies"]):
+    addMovie("movie3", "spurs_vs_okc", os.path.join(MOVIES_DIR, "spurs_vs_okc.mp4"))
+
+if not isUserExist("m"):
+    saveUser("m", "mm", "moran.reisfeld@gmail.com")
+if not isUserExist("r"):
+    saveUser("r", "rr", "moran.reis1234@gmail.com")

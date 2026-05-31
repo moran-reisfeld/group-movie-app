@@ -13,10 +13,9 @@ from encryption.key_exchange import (
     dh_derive_aes_key,
 )
 
-HOST = "127.0.0.1"
-PORT = 8080
-SIZE = 8
-
+import io
+from PIL import Image,ImageTk
+from constants import *
 
 def send(sock, msg):
     data = msg.encode()
@@ -59,7 +58,12 @@ class App:
         self.container.pack(fill="both", expand=True)
 
         self.frames = {}
-        for F in (LoginFrame, SignupFrame,ForgotFrame,LobbyFrame,CreateGroupFrame,JoinGroupFrame,GroupMovieFrame):
+        for F in (LoginFrame, SignupFrame,ForgotFrame,
+                  LobbyFrame,CreateGroupFrame,JoinGroupFrame,
+                  GroupMovieFrame
+                  # ,AddMovieFrame
+                  ):
+
             frame = F(self.container, self)
             self.frames[F.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
@@ -68,12 +72,14 @@ class App:
         self.container.grid_columnconfigure(0, weight=1)
 
         self.start_key_exchange()
-        self.show_frame("LoginFrame")
+        self.switch_frame("LoginFrame")
 
     def run(self):
         self.root.mainloop()
 
-    def show_frame(self, name):
+    def switch_frame(self, name):
+        if name == "CreateGroupFrame":
+            self.frames["CreateGroupFrame"].load_movies()
         self.frames[name].tkraise()
 
     def validation(self, username, password, mode="login", confirm_password=None, email=None):
@@ -145,14 +151,14 @@ class LoginFrame(tk.Frame):
             btn_frame,
             text="sign up",
             width=12,
-            command=lambda: self.app.show_frame("SignupFrame"),
+            command=lambda: self.app.switch_frame("SignupFrame"),
         ).pack(side="left", padx=5)
 
         tk.Button(
             btn_frame,
             text="forgot password",
             width=15,
-            command=lambda: self.app.show_frame("ForgotFrame"),
+            command=lambda: self.app.switch_frame("ForgotFrame"),
         ).pack(side="left", padx=5)
 
         self.user.bind("<Return>", lambda _e: self.login())
@@ -172,7 +178,7 @@ class LoginFrame(tk.Frame):
 
         if response == "OK":
             self.app.username = username
-            self.app.show_frame("LobbyFrame")
+            self.app.switch_frame("LobbyFrame")
             return
 
         if response.startswith("ERROR|"):
@@ -223,7 +229,7 @@ class SignupFrame(tk.Frame):
             btn_frame,
             text="back",
             width=12,
-            command=lambda: self.app.show_frame("LoginFrame"),
+            command=lambda: self.app.switch_frame("LoginFrame"),
         ).pack(side="left", padx=5)
 
         self.s_user.bind("<Return>", lambda _e: self.signup())
@@ -271,7 +277,7 @@ class SignupFrame(tk.Frame):
 
             if vres == "OK":
                 messagebox.showinfo("success", "registered successfully")
-                self.app.show_frame("LoginFrame")
+                self.app.switch_frame("LoginFrame")
                 return
 
             if vres.startswith("ERROR|"):
@@ -319,7 +325,7 @@ class ForgotFrame(tk.Frame):
         btn_frame.pack()
 
         tk.Button(btn_frame, text="send code", width=12, command=self.start).pack(side="left", padx=5)
-        tk.Button(btn_frame, text="back", width=12, command=lambda: self.app.show_frame("LoginFrame")).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="back", width=12, command=lambda: self.app.switch_frame("LoginFrame")).pack(side="left", padx=5)
 
         self.email_entry.bind("<Return>", lambda _e: self.start())
 
@@ -391,7 +397,7 @@ class ForgotFrame(tk.Frame):
 
             if pres == "OK":
                 messagebox.showinfo("success", "password updated")
-                self.app.show_frame("LoginFrame")
+                self.app.switch_frame("LoginFrame")
                 return
 
             if pres.startswith("ERROR|"):
@@ -475,7 +481,7 @@ class ForgotFrame(tk.Frame):
 #             pass
 #
 #         self.app.username = None
-#         self.app.show_frame("LoginFrame")
+#         self.app.switch_frame("LoginFrame")
 #
 #     def check_msgs(self):
 #         try:
@@ -510,13 +516,19 @@ class LobbyFrame(tk.Frame):
         tk.Button(
             self,
             text="Create Group",
-            command=lambda: app.show_frame("CreateGroupFrame")
+            command=lambda: app.switch_frame("CreateGroupFrame")
         ).pack(pady=10)
 
         tk.Button(
             self,
             text="Join Group",
-            command=lambda: app.show_frame("JoinGroupFrame")
+            command=lambda: app.switch_frame("JoinGroupFrame")
+        ).pack(pady=10)
+
+        tk.Button(
+            self,
+            text="Add Movie",
+            command=lambda: app.switch_frame("AddMovieFrame")
         ).pack(pady=10)
 
         tk.Button(
@@ -533,7 +545,7 @@ class LobbyFrame(tk.Frame):
 
         self.app.username = None
         self.app.group = None
-        self.app.show_frame("LoginFrame")
+        self.app.switch_frame("LoginFrame")
 
 
 class CreateGroupFrame(tk.Frame):
@@ -551,11 +563,7 @@ class CreateGroupFrame(tk.Frame):
 
         self.movie_listbox = tk.Listbox(self)
         self.movie_listbox.pack(pady=5)
-
-        # temporary mock movies
-        movies = ["Movie A", "Movie B", "Movie C"]
-        for movie in movies:
-            self.movie_listbox.insert(tk.END, movie)
+        self.movies = {}
 
         tk.Button(
             self,text="Create",command=self.create_group).pack(pady=10)
@@ -563,20 +571,20 @@ class CreateGroupFrame(tk.Frame):
         tk.Button(
             self,
             text="Back",
-            command=lambda: app.show_frame("LobbyFrame")
+            command=lambda: app.switch_frame("LobbyFrame")
         ).pack()
 
     def create_group(self):
         group_name = self.group_name_entry.get()
 
         selected = self.movie_listbox.curselection()
-
-        movie = self.movie_listbox.get(selected[0])
-
-        print(f"Creating group: {group_name}, Movie: {movie}")
-
-        msg = f"CREATE_GROUP|{group_name}|{movie}|{self.app.username}"
-        send_secure(self.app.sock, self.app.session,msg)
+        selected_title = self.movie_listbox.get(selected[0])
+        movie_id = None
+        for current_movie_id, current_title in self.movies.items():
+            if current_title == selected_title:
+                movie_id = current_movie_id
+                break
+        send_secure(self.app.sock, self.app.session,f"CREATE_GROUP|{group_name}|{movie_id}|{self.app.username}")
 
         res = recv_secure(self.app.sock,self.app.session)
         parts = res.split("|",1)
@@ -584,10 +592,23 @@ class CreateGroupFrame(tk.Frame):
         if parts[0] == "OK":
             self.app.group = parts[1]
             self.app.frames["GroupMovieFrame"].on_join()
-            self.app.show_frame("GroupMovieFrame")
+            self.app.switch_frame("GroupMovieFrame")
 
         elif parts[0] == "ERROR":
             messagebox.showerror("error", parts[1])
+
+    def load_movies(self):
+        self.movie_listbox.delete(0, tk.END)
+        self.movies = {}
+        send_secure(self.app.sock, self.app.session, "GET_MOVIES")
+        res = recv_secure(self.app.sock, self.app.session)
+        parts = res.split("|")[1:]
+        for part in parts:
+            if "," not in part: continue
+            movie_id, title = part.split(",", 1)
+            self.movies[movie_id] = title
+            self.movie_listbox.insert(tk.END, title)
+
 
 class JoinGroupFrame(tk.Frame):
     def __init__(self, parent, app):
@@ -609,7 +630,7 @@ class JoinGroupFrame(tk.Frame):
         tk.Button(
             self,
             text="Back",
-            command=lambda: app.show_frame("LobbyFrame")
+            command=lambda: app.switch_frame("LobbyFrame")
         ).pack()
 
     def join_group(self):
@@ -624,10 +645,11 @@ class JoinGroupFrame(tk.Frame):
         if parts[0] == "OK":
             self.app.group = parts[1]
             self.app.frames["GroupMovieFrame"].on_join()
-            self.app.show_frame("GroupMovieFrame")
+            self.app.switch_frame("GroupMovieFrame")
 
         elif parts[0] == "ERROR":
             messagebox.showerror("error", parts[1])
+
 
 class GroupMovieFrame(tk.Frame):
     def __init__(self, parent, app):
@@ -638,6 +660,7 @@ class GroupMovieFrame(tk.Frame):
         self.base_movie_time = 0
         self.last_sync_time = time.time()
         self.is_playing = False
+        self.join_count = 0
 
         top_bar = tk.Frame(self)
         top_bar.pack(fill="x", pady=5)
@@ -647,13 +670,15 @@ class GroupMovieFrame(tk.Frame):
         self.info_label = tk.Label(top_bar, text="none",font=("Arial", 16))
         self.info_label.pack(side="right", padx=10)
 
-        # ===== Video Placeholder =====
-        self.video_frame = tk.Frame(self, width=800, height=400)
-        self.video_frame.pack(pady=20)
+        self.video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.video_sock.settimeout(1.0)
+        self.current_photo = None  # prevent GC
 
-        self.video_label = tk.Label(self.video_frame, text="Video Area")
+        self.video_frame = tk.Frame(self, width=800, height=450, bg="black")
+        self.video_frame.pack(pady=10)
+        self.video_frame.pack_propagate(False)
+        self.video_label = tk.Label(self.video_frame, bg="black")
         self.video_label.place(relx=0.5, rely=0.5, anchor="center")
-        # =============================
 
         controls = tk.Frame(self)
         controls.pack(pady=10)
@@ -667,15 +692,17 @@ class GroupMovieFrame(tk.Frame):
         self.leave_btn.pack(pady=10)
 
     def on_join(self):
-        username = self.app.username
-        group_pin = self.app.group
-        self.info_label.config(text=f"{username} | Group: {group_pin}")
+        self.is_in_group = True
+        self.join_count += 1
+        current_join = self.join_count
 
-        if not self.is_in_group:
-            self.is_in_group = True
+        self.video_sock.close()
+        self.video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.video_sock.settimeout(1.0)
 
-            self.movie_thread = threading.Thread(target=self.movie_loop, daemon=True).start()
-            self.control_thread = threading.Thread(target=self.control_loop, daemon=True).start()
+        self.info_label.config(text=f"{self.app.username} | Group: {self.app.group}")
+        threading.Thread(target=self.control_loop, args=(current_join,) ,daemon=True).start()
+        threading.Thread(target=self.recv_video_loop,args=(current_join,), daemon=True).start()
 
 
     def send_controls(self,code):
@@ -683,38 +710,78 @@ class GroupMovieFrame(tk.Frame):
         if code in ["PLAY","PAUSE","FORWARD_10","BACKWORD_10"]:
             send_secure(self.app.sock,self.app.session,f"{code}|{group_pin}")
 
-    def movie_loop(self):
-        while self.is_in_group:
-            # load data / manage buffer
-            print(self.get_current_time())
-            time.sleep(0.1)
+    def recv_video_loop(self,join_count):
+        server_video_addr = (HOST, VIDEO_PORT)
+        my_group = self.app.group
+        join_msg = f"JOIN_STREAM|{my_group}|{self.app.username}".encode()
+        leave_msg = f"LEAVE_STREAM|{my_group}|{self.app.username}".encode()
+        self.video_sock.sendto(join_msg, server_video_addr)
 
-    def control_loop(self):
-        while self.is_in_group:
+        while self.is_in_group and self.join_count == join_count:
+            try:
+                data, _ = self.video_sock.recvfrom(UDP_MAX_SIZE)
+            except socket.timeout:
+                try:
+                    self.video_sock.sendto(join_msg, server_video_addr)
+                except Exception:
+                    pass
+                continue
+            except Exception:
+                break
+
+            if data == b"END":
+                print("received END")
+                self.after(0, self.on_movie_end)
+                break
+
+            if not data.startswith(b"FRAME|"):
+                continue
+            try:
+                img = Image.open(io.BytesIO(data[6:]))
+            except Exception:
+                continue
+            self.after(0, self.show_frame, img)
+
+        try:
+            self.video_sock.sendto(f"LEAVE_STREAM|{self.app.group}|{self.app.username}".encode(), server_video_addr)
+        except Exception:
+            pass
+
+    def show_frame(self, img):
+        img.thumbnail((800, 450))
+        photo = ImageTk.PhotoImage(img)
+        self.current_photo = photo
+        self.video_label.config(image=photo)
+
+    def control_loop(self,join_count):
+        while self.is_in_group and self.join_count == join_count:
             try:
                 msg = recv_secure(self.app.sock, self.app.session)
-                if msg:
-                    code,current_movie_time  = msg.split("|",1)
-                    current_movie_time = int(current_movie_time)
-                    now = time.time()
+                if not msg or "|" not in msg:
+                    continue
 
-                    if code == "PLAY":
-                        self.base_movie_time = current_movie_time
-                        self.last_sync_time = now
-                        self.is_playing = True
+                code,current_movie_time  = msg.split("|",1)
+                if code not in ("PLAY", "PAUSE", "FORWARD_10", "BACKWORD_10"): continue
+                current_movie_time = int(current_movie_time)
+                now = time.time()
 
-                    elif code == "PAUSE":
-                        self.base_movie_time = current_movie_time
-                        self.last_sync_time = now
-                        self.is_playing = False
+                if code == "PLAY":
+                    self.base_movie_time = current_movie_time
+                    self.last_sync_time = now
+                    self.is_playing = True
 
-                    elif code == "FORWARD_10":
-                        self.base_movie_time = current_movie_time
-                        self.last_sync_time = now
+                elif code == "PAUSE":
+                    self.base_movie_time = current_movie_time
+                    self.last_sync_time = now
+                    self.is_playing = False
 
-                    elif code == "BACKWORD_10":
-                        self.base_movie_time = current_movie_time
-                        self.last_sync_time = now
+                elif code == "FORWARD_10":
+                    self.base_movie_time = current_movie_time
+                    self.last_sync_time = now
+
+                elif code == "BACKWORD_10":
+                    self.base_movie_time = current_movie_time
+                    self.last_sync_time = now
 
             except socket.timeout:
                 continue
@@ -730,7 +797,7 @@ class GroupMovieFrame(tk.Frame):
         self.base_movie_time = 0
 
         self.app.group = None
-        self.app.show_frame("LobbyFrame")
+        self.app.switch_frame("LobbyFrame")
 
     def get_current_time(self):
         if self.is_playing:
@@ -740,8 +807,52 @@ class GroupMovieFrame(tk.Frame):
 
         return self.base_movie_time
 
+    def on_movie_end(self):
+        messagebox.showinfo("movie ended", "the movie has ended")
+        self.video_label.config(image="")
+        self.current_photo = None
 
-
+# import tkinter.filedialog as filedialog
+# class AddMovieFrame(tk.Frame):
+#     def __init__(self, parent, app):
+#         super().__init__(parent)
+#         self.app = app
+#
+#         tk.Label(self, text="Add Movie", font=("Arial", 20)).pack(pady=20)
+#
+#         tk.Label(self, text="Title").pack()
+#         self.title_entry = tk.Entry(self, width=30)
+#         self.title_entry.pack(pady=5)
+#
+#         tk.Label(self, text="File").pack()
+#         file_frame = tk.Frame(self)
+#         file_frame.pack(pady=5)
+#         self.path_entry = tk.Entry(file_frame, width=30)
+#         self.path_entry.pack(side="left")
+#         tk.Button(file_frame, text="Browse", command=self.browse).pack(side="left", padx=5)
+#
+#         tk.Button(self, text="Add", command=self.add_movie).pack(pady=10)
+#         tk.Button(self, text="Back", command=lambda: app.switch_frame("LobbyFrame")).pack()
+#
+#     def browse(self):
+#         path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4")])
+#         if path:
+#             self.path_entry.delete(0, tk.END)
+#             self.path_entry.insert(0, path)
+#
+#     def add_movie(self):
+#         title = self.title_entry.get().strip()
+#         path  = self.path_entry.get().strip()
+#         if not title or not path:
+#             messagebox.showerror("error", "please fill all fields")
+#             return
+#         send_secure(self.app.sock, self.app.session, f"ADD_MOVIE|{title}|{path}")
+#         res = recv_secure(self.app.sock, self.app.session)
+#         if res == "OK":
+#             messagebox.showinfo("success", "movie added")
+#             self.app.switch_frame("LobbyFrame")
+#         elif res.startswith("ERROR|"):
+#             messagebox.showerror("error", res.split("|", 1)[1])
 
 
 

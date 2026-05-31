@@ -14,11 +14,14 @@ from encryption.GCM_functions import SecureSession
 from AsyncMessages import AsyncMessages
 AsyncMsgs = AsyncMessages()
 
+import ffmpeg,io
+import numpy as np
+from PIL import Image
+from constants import *
 
-
-HOST = "0.0.0.0"
-PORT = 8080
-SIZE = 8
+udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+udp_sock.bind((HOST, VIDEO_PORT))
+udp_sock.settimeout(1.0)
 
 def send(sock, msg):
     data = msg.encode()
@@ -29,6 +32,7 @@ def recv(sock):
     if not size:
         return ""
     return sock.recv(int(size.decode())).decode()
+
 
 def send_secure(sock, session, msg):
     encrypted = session.encrypt(msg.encode())
@@ -42,12 +46,152 @@ def recv_secure(sock, session):
     encrypted_data = sock.recv(int(size.decode()))
     return session.decrypt(encrypted_data).decode()
 
+
 def get_current_time(group):
     if group.is_playing:
         now = time.time()
         elapsed = int(now - group.last_sync_time)
         return group.base_movie_time + elapsed
     return group.base_movie_time
+
+
+def udp_listener():
+    while True:
+        try:
+            data, addr = udp_sock.recvfrom(1024)
+        except socket.timeout:
+            continue
+        except Exception:
+            break
+        try:
+            parts = data.decode().split("|")
+            group = database.getGroupByPin(parts[1])
+            if not group:
+                continue
+            if parts[0] == "JOIN_STREAM":
+                with group.stream_lock:
+                    group.stream_clients.add(addr)
+            elif parts[0] == "LEAVE_STREAM":
+                with group.stream_lock:
+                    group.stream_clients.discard(addr)
+        except Exception:
+            continue
+
+
+def stream_group(sock, group_pin, video_path):
+    try:
+        probe = ffmpeg.probe(video_path)
+        v_info = next(s for s in probe["streams"] if s["codec_type"] == "video")
+        width = int(v_info["width"])
+        height = int(v_info["height"])
+        fps_str = v_info.get("r_frame_rate", "30/1")
+        num, den = map(int, fps_str.split("/"))
+        src_fps = num/den
+        duration = float(v_info.get("duration", 0))
+    except Exception as e:
+        print(f"[stream_group] Cannot probe {video_path}: {e}")
+        return
+
+    frame_size = width * height * 3
+    total_frames = int(duration * src_fps)
+    video_ended = False
+
+    while True:
+        group = database.getGroupByPin(group_pin)
+        if not group:
+            break
+
+        with group.stream_lock:
+            clients = list(group.stream_clients)
+
+        if not group.is_playing:
+            time.sleep(0.1)
+            continue
+
+        current_sec = get_current_time(group)
+        skip_at_start = group.skip_count
+        frames_from_start = int(current_sec * src_fps)
+        frames_remaining = total_frames - frames_from_start
+
+        if frames_remaining <= 0:
+            print("already at end of video")
+            group.is_playing      = False
+            group.base_movie_time = 0
+            video_ended           = True
+            break
+
+        process = (
+            ffmpeg.input(video_path, ss=current_sec)
+            .output("pipe:", format="rawvideo", pix_fmt="rgb24")
+            .run_async(pipe_stdout=True, pipe_stderr=True)
+        )
+
+        frames_sent = 0
+        try:
+            while True:
+                group = database.getGroupByPin(group_pin)
+                if not group or not group.is_playing:
+                    break
+
+                with group.stream_lock:
+                    clients = list(group.stream_clients)
+                if not clients:
+                    break
+
+                if group.skip_count != skip_at_start:
+                    break
+
+                raw = process.stdout.read(frame_size)
+                if len(raw) < frame_size:
+                    print("end of video reached (raw)")
+                    group.is_playing      = False
+                    group.base_movie_time = 0
+                    video_ended           = True
+                    break
+
+                frames_sent += 1
+                if frames_sent >= frames_remaining:
+                    print("end of video reached (frame count)")
+                    group.is_playing      = False
+                    group.base_movie_time = 0
+                    video_ended           = True
+                    break
+
+                buf = io.BytesIO()
+                Image.fromarray(
+                    np.frombuffer(raw, np.uint8).reshape((height, width, 3))
+                ).save(buf, format="JPEG", quality=75)
+                datagram = b"FRAME|" + buf.getvalue()
+
+                if len(datagram) <= UDP_MAX_SIZE:
+                    for addr in clients:
+                        try:
+                            sock.sendto(datagram, addr)
+                        except Exception:
+                            pass
+
+                time.sleep(FPS_DELAY)
+
+        finally:
+            process.stdout.close()
+            process.stderr.close()
+            process.wait()
+
+        if video_ended:
+            break
+
+    group = database.getGroupByPin(group_pin)
+    if group:
+        with group.stream_lock:
+            clients = list(group.stream_clients)
+        for addr in clients:
+            try:
+                udp_sock.sendto(b"END", addr)
+                print(f"sent END to {addr}")
+            except Exception:
+                pass
+        group.is_playing      = False
+        group.base_movie_time = 0
 
 class ClientThread(threading.Thread):
     def __init__(self, sock):
@@ -72,6 +216,9 @@ class ClientThread(threading.Thread):
             except socket.timeout:
                 self.send_pending_messages()
             except OSError:
+                break
+            except Exception as e:
+                print(f"ClientThread error: {e}")  # add this
                 break
 
     def do_dh_handshake(self):
@@ -153,13 +300,16 @@ class ClientThread(threading.Thread):
                 send_secure(self.sock,self.session,"ERROR|no movie selected")
                 return
 
-            group_pin = database.createGroup(group_name, movie_id,username)
+            group_pin = database.createGroup(group_name, movie_id, username)
+            video_path = database.getMoviePath(movie_id)
+
             send_secure(self.sock, self.session, f"OK|{group_pin}")
 
             group = database.getGroupByPin(group_pin)
             current_time = get_current_time(group)
-
             AsyncMsgs.put_msg_by_user(f"PAUSE|{current_time}", username)
+            threading.Thread(target=stream_group, args=(udp_sock, group_pin, video_path), daemon=True).start()
+
 
         elif code == "JOIN_GROUP":
             group_pin,username = parts[1],parts[2]
@@ -217,11 +367,13 @@ class ClientThread(threading.Thread):
                 current_time += 10
                 group.base_movie_time = current_time
                 group.last_sync_time = time.time()
+                group.skip_count += 1
 
             elif code == "BACKWORD_10":
                 current_time = max(0, current_time - 10)
                 group.base_movie_time = current_time
                 group.last_sync_time = time.time()
+                group.skip_count += 1
 
 
             members = database.getGroupMembers(group_pin)
@@ -230,11 +382,28 @@ class ClientThread(threading.Thread):
 
                 if sock: AsyncMsgs.put_msg_by_user(f"{code}|{current_time}", user)
 
-        elif code == "START_STREAM":
-            pass
+        elif code == "GET_MOVIES":
+            movie_parts = []
+            for movie in database.data["movies"]:
+                movie_parts.append(f"{movie.movie_id},{movie.title}")
+            response = "MOVIES|" + "|".join(movie_parts)
+            send_secure(self.sock, self.session, response)
 
-        elif code == "END_STREAM":
-            pass
+        # elif code == "ADD_MOVIE":
+        #     print(f"ADD_MOVIE received: title={parts[1]} path={parts[2]}")
+        #     if len(parts) != 3:
+        #         send_secure(self.sock, self.session, "ERROR|invalid request")
+        #         return
+        #
+        #     title,path = parts[1],parts[2]
+        #     movie_id = title.lower().replace(" ", "_")
+        #     for m in database.data["movies"]:
+        #         if m.movie_id == movie_id:
+        #             send_secure(self.sock, self.session, "ERROR|movie already exists")
+        #             return
+        #
+        #     database.addMovie(movie_id, title, path)
+        #     send_secure(self.sock, self.session, "OK")
 
         elif code == "LOGOUT":
             send_secure(self.sock, self.session, "INFO|logged out")
@@ -344,7 +513,11 @@ class ClientThread(threading.Thread):
             pass
         self.username = None
 
+
 def main():
+    threading.Thread(target=udp_listener, daemon=True).start()
+    print(database.data["movies"])
+    print(database.data["users"])
     server = socket.socket()
     server.bind((HOST, PORT))
     server.listen(20)
