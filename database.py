@@ -431,7 +431,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOVIES_DIR = os.path.join(BASE_DIR, "movies")
 
 if not any(m.movie_id == "movie1" for m in data["movies"]):
-    addMovie("movie1", "cars", os.path.join(MOVIES_DIR, "1_movie.mp4"))
+    addMovie("movie1", "1min countdown", os.path.join(MOVIES_DIR, "1_movie.mp4"))
 if not any(m.movie_id == "movie2" for m in data["movies"]):
     addMovie("movie2", "knicks highlights", os.path.join(MOVIES_DIR, "knicks_highlights.mp4"))
 if not any(m.movie_id == "movie3" for m in data["movies"]):
