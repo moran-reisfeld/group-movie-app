@@ -438,6 +438,6 @@ if not any(m.movie_id == "movie3" for m in data["movies"]):
     addMovie("movie3", "spurs_vs_okc", os.path.join(MOVIES_DIR, "spurs_vs_okc.mp4"))
 
 if not isUserExist("m"):
-    saveUser("m", "mm", "moran.reisfeld@gmail.com")
+    saveUser("m", "mm", "m@gmail.com")
 if not isUserExist("r"):
-    saveUser("r", "rr", "moran.reis1234@gmail.com")
+    saveUser("r", "rr", "r@gmail.com")
