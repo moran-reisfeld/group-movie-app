@@ -1,6 +1,9 @@
 __author__ = "moran reisfeld"
 
-HOST = "127.0.0.1"
+import sys
+import os
+
+HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 PORT = 8080
 SIZE = 8
 

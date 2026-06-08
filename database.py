@@ -11,6 +11,7 @@ import string,random
 
 from smtp_mail import generate_security_code, send_signup_code, send_reset_code
 
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 data_file = "encryption/data.pkl"
 obj_lock = threading.RLock()
 pepper_file = "encryption/pepper.secret"

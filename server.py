@@ -20,7 +20,7 @@ from PIL import Image
 from constants import *
 
 udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-udp_sock.bind((HOST, VIDEO_PORT))
+udp_sock.bind(("0.0.0.0", VIDEO_PORT))
 udp_sock.settimeout(1.0)
 
 def send(sock, msg):
@@ -516,10 +516,9 @@ class ClientThread(threading.Thread):
 
 def main():
     threading.Thread(target=udp_listener, daemon=True).start()
-    print(database.data["movies"])
-    print(database.data["users"])
+    print(HOST)
     server = socket.socket()
-    server.bind((HOST, PORT))
+    server.bind(("0.0.0.0", PORT))
     server.listen(20)
 
     try:
